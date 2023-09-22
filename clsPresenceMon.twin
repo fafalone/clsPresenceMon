@@ -1,6 +1,11 @@
 [ COMCreatable (False) ]
 Class clsPresenceMon
-
+/*
+clsPresenceMon - User Presence Monitor
+v0.1 (Initial release)
+By Jon Johnson (fafalone)
+(c) 2023
+*/
     Public Event MonitorOff()
     Public Event MonitorOn()
     Public Event MonitorDim()
