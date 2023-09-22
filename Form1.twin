@@ -1,0 +1,148 @@
+[ Description ("") ]
+[ FormDesignerId ("3D10BF4E-7BA5-45BF-91D1-C6A80FFCE8F6") ]
+[ PredeclaredId ]
+Class Form1
+    Private m_hEventM As LongPtr
+    Private m_hEventP As LongPtr
+    Private m_hEventL As LongPtr
+    
+    Private WithEvents CMon As clsPresenceMon
+    
+    Private Const dbg_dtFormat As String = "yyyy-mm-dd Hh:nn:Ss"
+    
+    Private Sub LogEvent(sEvt As String)
+    	Dim sOut As String
+        sOut = "[" & Format$(Now, dbg_dtFormat) & "] "
+        sOut &= sEvt
+        List1.AddItem sOut
+    End Sub
+    Private Sub Command1_Click() Handles Command1.Click
+        If RegisterEvents() Then
+        	LogEvent "Registered for events, listening..."
+            Subclass2 Form1.hWnd, AddressOf PBWndProc, Form1.hWnd
+        Else
+        	LogEvent "Failed to register for events."
+        End If
+    End Sub
+    Private Function RegisterEvents() As Boolean
+        m_hEventM = RegisterPowerSettingNotification(Me.hWnd, GUID_SESSION_DISPLAY_STATUS, DEVICE_NOTIFY_WINDOW_HANDLE)
+        m_hEventP = RegisterPowerSettingNotification(Me.hWnd, GUID_SESSION_USER_PRESENCE, DEVICE_NOTIFY_WINDOW_HANDLE)
+        m_hEventL = RegisterPowerSettingNotification(Me.hWnd, GUID_LIDSWITCH_STATE_CHANGE, DEVICE_NOTIFY_WINDOW_HANDLE)
+        If m_hEventM Then Return True
+    End Function
+    Private Sub UnregisterEvents()
+        If m_hEventM Then UnregisterPowerSettingNotification(m_hEventM): m_hEventM = 0
+        If m_hEventP Then UnregisterPowerSettingNotification(m_hEventP): m_hEventP = 0
+        If m_hEventL Then UnregisterPowerSettingNotification(m_hEventL): m_hEventL = 0
+        
+    End Sub
+    Private Function Subclass2(hWnd As LongPtr, lpFN As LongPtr, Optional uId As LongPtr = 0&, Optional dwRefData As LongPtr = 0&) As Boolean
+    If uId = 0 Then uId = hWnd
+        Subclass2 = SetWindowSubclass(hWnd, lpFN, uId, dwRefData):      Debug.Assert Subclass2
+    End Function
+
+    Private Function UnSubclass2(hWnd As LongPtr, ByVal lpFN As LongPtr, pid As LongPtr) As Boolean
+        UnSubclass2 = RemoveWindowSubclass(hWnd, lpFN, pid)
+    End Function
+    
+    [ Description ("Subclassing procedure for the RichEdit control and the PictureBox hosting it.") ]
+    Private Function PBWndProc(ByVal hWnd As LongPtr, ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr, ByVal uIdSubclass As LongPtr, ByVal dwRefData As LongPtr) As LongPtr
+        Select Case uMsg
+    
+        Case WM_POWERBROADCAST
+            If wParam = PBT_POWERSETTINGCHANGE Then
+                Dim pSetting As POWERBROADCAST_SETTING
+                CopyMemory pSetting, ByVal lParam, 20
+                If IsEqualGUID(pSetting.PowerSetting, GUID_SESSION_DISPLAY_STATUS) Then
+                    Dim pState As MONITOR_DISPLAY_STATE
+                    CopyMemory pState, ByVal PointerAdd(lParam, 20), 4
+                    Select Case pState
+                        Case PowerMonitorOff
+                            LogEvent "Monitor Off"
+                        Case PowerMonitorOn
+                            LogEvent "Monitor On"
+                        Case PowerMonitorDim
+                            LogEvent "Monitor dimmed"
+                    End Select
+                ElseIf IsEqualGUID(pSetting.PowerSetting, GUID_SESSION_USER_PRESENCE) Then
+                	Dim pPres As USER_ACTIVITY_PRESENCE
+                    CopyMemory pState, ByVal PointerAdd(lParam, 20), 4
+                    Select Case pPres
+                    	Case PowerUserPresent
+                            LogEvent "User present"
+                        Case PowerUserInactive
+                            LogEvent "User inactive"
+                        Case PowerUserNotPresent
+                            LogEvent "User not present"
+                        Case PowerUserInvalid
+                            LogEvent "User invalid presence"
+                    End Select
+                ElseIf IsEqualGUID(pSetting.PowerSetting, GUID_LIDSWITCH_STATE_CHANGE) Then
+                	Dim fOpen As BOOL
+                    If pSetting.DataLength <> 4 Then
+                    	LogEvent "Bad lid size"
+                    Else
+                        CopyMemory fOpen, ByVal PointerAdd(lParam, 20), 4
+                        If fOpen Then
+                        	LogEvent "Lid open"
+                        Else
+                        	LogEvent "Lid close"
+                        End If
+                    End If
+                    
+                End If
+                    
+            End If
+            
+        Case WM_DESTROY
+            Call UnSubclass2(hWnd, AddressOf PBWndProc, uIdSubclass)
+        End Select
+        Return DefSubclassProc(hWnd, uMsg, wParam, lParam)
+    End Function
+    
+
+    
+    Private Sub Command2_Click() Handles Command2.Click
+        UnregisterEvents
+        LogEvent "Unregistered events."
+    End Sub
+    
+    Private Sub Form_Unload(Cancel As Integer) Handles Form.Unload
+        UnregisterEvents
+        UnSubclass2 Form1.hWnd, AddressOf PBWndProc, Form1.hWnd
+    End Sub
+    
+    Private Sub Command3_Click() Handles Command3.Click
+        Set CMon = New clsPresenceMon(CPMEN_ALL, App.hInstance)
+    End Sub
+    Private Sub Command4_Click() Handles Command4.Click
+    	CMon.Destroy
+        Set CMon = Nothing
+    End Sub
+    
+    Private Sub CMon_MonitorOff() Handles CMon.MonitorOff
+        LogEvent "Monitor Off"
+    End Sub
+    
+    Private Sub CMon_MonitorOn() Handles CMon.MonitorOn
+        LogEvent "Monitor On"
+    End Sub
+    
+    Private Sub CMon_MonitorDim() Handles CMon.MonitorDim
+        LogEvent "Monitor Dimmed"
+    End Sub
+    
+    Private Sub CMon_LidClose() Handles CMon.LidClose
+        LogEvent "Lid Closed"
+    End Sub
+    
+    Private Sub CMon_LidOpen() Handles CMon.LidOpen
+        LogEvent "Lid Opened"
+    End Sub
+    
+    Private Sub CMon_UserPresent() Handles CMon.UserPresent
+        LogEvent "User Present"
+    End Sub
+    
+
+End Class

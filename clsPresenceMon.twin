@@ -1,0 +1,210 @@
+[ COMCreatable (False) ]
+Class clsPresenceMon
+
+    Public Event MonitorOff()
+    Public Event MonitorOn()
+    Public Event MonitorDim()
+    Public Event UserPresent()
+    Public Event LidOpen()
+    Public Event LidClose()
+
+    Private m_hWnd As LongPtr
+    Private m_hInst As LongPtr
+    Private m_hEventM As LongPtr
+    Private m_hEventP As LongPtr
+    Private m_hEventL As LongPtr
+    Private m_hThread As LongPtr
+    Private m_idThread As Long
+
+    Private Const wndClass = "CPresenceMonWnd"
+    Private Const wndName = ""
+    
+    Public Enum CPMonEventNotify
+    	CPMEN_ERROR = 0
+        CPMEN_MONITOROFF = &H01
+        CPMEN_MONITORON = &H02
+        CPMEN_MONITORDIM = &H04
+        CPMEN_USERPRESENCE = &H08
+        CPMEN_LIDOPEN = &H10
+        CPMEN_LIDCLOSE = &H20
+        
+        CPMEN_ALL = (-1)
+    End Enum
+    Private m_Mask As CPMonEventNotify
+    
+    Private Type ConfigData
+    	hWnd As LongPtr
+        hInst As LongPtr
+        Mask As CPMonEventNotify
+    End Type
+    Private tConfig As ConfigData
+    
+    
+    Sub New(Optional ByVal dwNotifyMask As CPMonEventNotify = CPMEN_ALL, Optional ByVal hInst As LongPtr)
+    	m_hInst = If(hInst = 0, GetModuleHandleW(), hInst)
+        If dwNotifyMask = CPMEN_ERROR Then Exit Sub
+        m_Mask = dwNotifyMask
+        
+        tConfig.hInst = m_hInst
+        tConfig.Mask = m_Mask
+        
+        m_hThread = CreateThread(ByVal 0, 0, AddressOf CPMonProc, tConfig, 0, m_idThread)
+            
+    End Sub
+    
+    Private Function CPMonProc(pConfig As ConfigData) As Long
+    	CoInitialize ByVal 0
+        If CreateApplicationWindow(pConfig) Then
+            If RegisterEvents() = False Then
+            	PostLog "Failed to register events."
+                DestroyWindow m_hWnd
+                m_hWnd = 0
+                Return E_ABORT
+            End If
+            EnterMessageLoop
+        End If
+        CoUninitialize
+    End Function
+    Private Sub PostLog(sMsg As String)
+    	Debug.Print sMsg
+    End Sub
+    
+    Private Function RegisterEvents() As Boolean
+        m_hEventM = RegisterPowerSettingNotification(m_hWnd, GUID_SESSION_DISPLAY_STATUS, DEVICE_NOTIFY_WINDOW_HANDLE)
+        m_hEventP = RegisterPowerSettingNotification(m_hWnd, GUID_SESSION_USER_PRESENCE, DEVICE_NOTIFY_WINDOW_HANDLE)
+        m_hEventL = RegisterPowerSettingNotification(m_hWnd, GUID_LIDSWITCH_STATE_CHANGE, DEVICE_NOTIFY_WINDOW_HANDLE)
+        If m_hEventM Then Return True
+    End Function
+    Private Sub UnregisterEvents()
+        If m_hEventM Then UnregisterPowerSettingNotification(m_hEventM): m_hEventM = 0
+        If m_hEventP Then UnregisterPowerSettingNotification(m_hEventP): m_hEventP = 0
+        If m_hEventL Then UnregisterPowerSettingNotification(m_hEventL): m_hEventL = 0
+        
+    End Sub
+    
+    Private Function CreateApplicationWindow(pConfig As ConfigData) As Long
+
+        Dim hr As Long = S_OK
+    
+        Dim wcex As WNDCLASSEX
+    
+        wcex.cbSize = LenB(wcex)
+        wcex.style = CS_HREDRAW Or CS_VREDRAW
+        wcex.lpfnWndProc = AddressOf WindowProc
+        wcex.cbClsExtra = 0
+        wcex.cbWndExtra = 0
+        wcex.hInstance = m_hInst
+        wcex.hIcon = 0
+        wcex.lpszMenuName = 0
+        wcex.lpszClassName = StrPtr(wndClass)
+        wcex.hIconSm = 0
+    
+        hr = IIf(RegisterClassEx(wcex), S_OK, E_FAIL)
+        If Err.LastDllError = ERROR_CLASS_ALREADY_EXISTS Then
+            PostLog "ERROR_CLASS_ALREADY_EXISTS; registering."
+            UnregisterClassW StrPtr(wndClass), m_hInst
+            hr = IIf(RegisterClassEx(wcex), S_OK, E_FAIL)
+        End If
+    
+        If SUCCEEDED(hr) Then
+        
+            Dim dwStyle As WindowStyles
+            'If pConfig.hWnd Then dwStyle = WS_CHILD
+            dwStyle = dwStyle Or WS_CLIPSIBLINGS Or WS_OVERLAPPED
+            m_hWnd = CreateWindowExW(0, StrPtr(wndClass), StrPtr(wndName), dwStyle, _
+                            CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, pConfig.hWnd, 0, pConfig.hInst, ByVal 0)
+        
+            If m_hWnd Then Return 1
+        Else
+        	Debug.Print "Failed to register window class."
+        End If
+        
+    End Function
+    Private Function EnterMessageLoop() As Long
+        Dim result As Long
+            Dim tMSG As MSG
+            Dim hr As Long
+            PostLog "Entering message loop"
+            hr = GetMessage(tMSG, m_hWnd, 0, 0)
+            Do While hr <> 0
+                If hr = -1 Then
+                    PostLog "Error: 0x" & Hex$(Err.LastDllError)
+                    If Err.LastDllError = ERROR_INVALID_WINDOW_HANDLE Then Exit Do
+                Else
+                    TranslateMessage tMSG
+                    DispatchMessage tMSG
+                End If
+                hr = GetMessage(tMSG, m_hWnd, 0, 0)
+            Loop
+            PostLog "Exited message loop"
+            result = CLng(tMSG.wParam)
+        
+        EnterMessageLoop = result
+    End Function
+    Private Function WindowProc(ByVal hWnd As LongPtr, ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr) As LongPtr
+        Dim result As LongPtr
+    
+        Select Case uMsg
+            Case WM_CREATE
+                PostLog "WM_CREATE"
+            
+            Case WM_POWERBROADCAST
+                If wParam = PBT_POWERSETTINGCHANGE Then
+                	Dim pSetting As POWERBROADCAST_SETTING
+                    CopyMemory pSetting, ByVal lParam, 20
+                    If IsEqualGUID(pSetting.PowerSetting, GUID_SESSION_DISPLAY_STATUS) Then
+                    	Dim pState As MONITOR_DISPLAY_STATE
+                        CopyMemory pState, ByVal PointerAdd(lParam, 20), 4
+                        Select Case pState
+                        	Case PowerMonitorOff
+                                If (m_Mask And CPMEN_MONITOROFF) Then RaiseEvent MonitorOff()
+                            Case PowerMonitorOn
+                                If (m_Mask And CPMEN_MONITORON) Then RaiseEvent MonitorOn()
+                            Case PowerMonitorDim
+                                If (m_Mask And CPMEN_MONITORDIM) Then RaiseEvent MonitorDim()
+                        End Select
+                    ElseIf IsEqualGUID(pSetting.PowerSetting, GUID_SESSION_USER_PRESENCE) Then
+                        Dim pPres As USER_ACTIVITY_PRESENCE
+                        CopyMemory pState, ByVal PointerAdd(lParam, 20), 4
+                        If (m_Mask And CPMEN_USERPRESENCE) Then RaiseEvent UserPresent()
+                    ElseIf IsEqualGUID(pSetting.PowerSetting, GUID_LIDSWITCH_STATE_CHANGE) Then
+                        Dim fOpen As BOOL
+                        If pSetting.DataLength <> 4 Then
+                            Debug.Print "Bad lid size"
+                        Else
+                            CopyMemory fOpen, ByVal PointerAdd(lParam, 20), 4
+                            If fOpen Then
+                                If (m_Mask And CPMEN_LIDOPEN) Then RaiseEvent LidOpen()
+                            Else
+                                If (m_Mask And CPMEN_LIDCLOSE) Then RaiseEvent LidClose()
+                            End If
+                        End If
+                    End If
+                End If
+            
+            Case WM_CLOSE
+                DestroyWindow m_hWnd
+            
+            Case WM_DESTROY
+                UnregisterEvents
+                PostQuitMessage 0
+        
+            
+            Case Else
+                result = DefWindowProc(hWnd, uMsg, wParam, lParam)
+        End Select
+    
+        WindowProc = result
+    End Function
+    
+    
+    Public Sub Destroy()
+        If m_hWnd Then PostMessageW(m_hWnd, WM_CLOSE, 0, ByVal 0)
+        Dim lRet As WaitForObjOutcomes = WaitForSingleObject(m_hThread, 5000)
+        Debug.Print "Wait outcome=" & lRet
+        Dim hr As Long = UnregisterClassW(StrPtr(wndClass), m_hInst)
+        Debug.Print "Unregister hr=" & hr & ", lastErr=" & Err.LastDllError
+    End Sub
+    
+
+End Class
